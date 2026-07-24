@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Flex APIv2</title>
+    <style>
+      body {
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+        background-color: #f4f6f9;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+        flex-direction: column;
+      }
+
+      .card-form {
+        background: #fff;
+        padding: 25px 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        width: 400px;
+        box-sizing: border-box;
+      }
+
+      .card-form h3 {
+        text-align: center;
+        margin-top: 0;
+        margin-bottom: 20px;
+        color: #005cb9; 
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: #555;
+      }
+
+      input, textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 2px solid #ccc;
+        border-radius: 6px;
+        font-size: 15px;
+        box-sizing: border-box;
+        transition: border-color 0.3s ease;
+      }
+
+      textarea {
+        font-size: 11px;
+        font-family: monospace;
+        resize: vertical;
+      }
+
+      input:focus, textarea:focus {
+        border-color: #005cb9;
+        outline: none;
+      }
+
+      .row-fields {
+        display: flex;
+        gap: 15px;
+      }
+
+      .row-fields .form-group {
+        flex: 1;
+      }
+
+      button {
+        width: 100%;
+        padding: 12px;
+        background: #febd11;
+        color: #002e6e; 
+        font-weight: bold;
+        border: none;
+        border-radius: 6px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background 0.3s ease;
+      }
+
+      button:hover {
+        background: #e0a300;
+      }
+    </style>
+  </head>
+  <body>
+
+    <div class="card-form">
+      <h3>Cifrado JWE Coppel 3</h3>
+
+      <div class="form-group">
+        <label for="captureContext">Capture Context (JWT)</label>
+        <textarea id="captureContext" rows="4" placeholder="Pega aquí tu Capture Context JWT"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="cardNumber">Número de tarjeta</label>
+        <input 
+          id="cardNumber" 
+          type="text" 
+          inputmode="numeric" 
+          maxlength="19" 
+          placeholder="0000 0000 0000 0000" 
+          value="4111111111111111" 
+        />
+      </div>
+
+      <div class="row-fields">
+        <div class="form-group">
+          <label for="expiration">Expiración (MM/YY)</label>
+          <input id="expiration" type="text" maxlength="5" placeholder="MM/YY" value="12/30" />
+        </div>
+
+        <div class="form-group">
+          <label for="securityCode">CVV</label>
+          <input id="securityCode" type="password" maxlength="4" placeholder="123" value="123" />
+        </div>
+      </div>
+
+      <button id="tokenize">Encriptar y Tokenizar</button>
+    </div>
+    <script>
+      function parseJWT(token) {
+        const decode = s => JSON.parse(atob(
+          s.replace(/-/g, '+').replace(/_/g, '/')
+           .padEnd(s.length + (4 - s.length % 4) % 4, '=')));
+        const [h, p] = token.split('.');
+        return { header: decode(h), payload: decode(p) };
+      }
+
+      function b64uEncode(buf) {
+        return btoa(String.fromCharCode(...new Uint8Array(buf)))
+          .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      async function buildJWE(captureContextJwt, cardData) {
+        const ctx = parseJWT(captureContextJwt);
+        const jwk = ctx.payload.flx.jwk;
+        const kid = jwk.kid;
+        const rsaKey = await crypto.subtle.importKey(
+          'jwk',
+          jwk,
+          { name: 'RSA-OAEP', hash: 'SHA-1' },
+          false,
+          ['wrapKey']
+        );
+        const cek = await crypto.subtle.generateKey(
+          { name: 'AES-GCM', length: 256 },
+          true,
+          ['encrypt']
+        );
+        const wrappedCek = await crypto.subtle.wrapKey('raw', cek, rsaKey, { name: 'RSA-OAEP' });
+        const header = { alg: 'RSA-OAEP', enc: 'A256GCM', kid };
+        const headerB64 = b64uEncode(new TextEncoder().encode(JSON.stringify(header)));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const plaintext = JSON.stringify({
+          context: captureContextJwt,
+          data: {
+            paymentInformation: {
+              card: cardData
+            }
+          },
+          index: 0
+        });
+        const encrypted = await crypto.subtle.encrypt(
+          {
+            name: 'AES-GCM',
+            iv,
+            additionalData: new TextEncoder().encode(headerB64),
+            tagLength: 128
+          },
+          cek,
+          new TextEncoder().encode(plaintext)
+        );
+        const enc = new Uint8Array(encrypted);
+        const cipher = enc.slice(0, -16);
+        const authTag = enc.slice(-16);
+        const jwe = [
+          headerB64,
+          b64uEncode(wrappedCek),
+          b64uEncode(iv),
+          b64uEncode(cipher),
+          b64uEncode(authTag)
+        ].join('.');
+        return jwe;
+      }
+
+      async function encryptAndTokenize() {
+        try {
+          const captureContext = document.getElementById("captureContext").value.trim();
+
+          if(captureContext == ''){
+            alert('Agrega el JWT del captureContext');
+            return;
+          }
+
+          const cardNumber = document.getElementById("cardNumber").value.replace(/\s+/g, '');
+          const expiration = document.getElementById("expiration").value;
+          const securityCode = document.getElementById("securityCode").value;
+          const [month, year] = expiration.split("/");
+          const cardData = {
+            number: cardNumber,
+            securityCode: securityCode,
+            expirationMonth: month,
+            expirationYear: `20${year}`
+          };
+          const jwe = await buildJWE(captureContext, cardData);
+          const tokenResponse = await fetch('/flex/v2/tokens', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/jwt'       
+            },
+            body: jwe 
+          });
+          if (!tokenResponse.ok) {
+            const err = await tokenResponse.json().catch(() => ({}));
+            throw new Error('Error en la tokenización de Visa: ' + (err.message || tokenResponse.status));
+          }
+          const transientToken = await tokenResponse.text();
+          const decodedTransient = parseJWT(transientToken);
+          console.log(transientToken);
+          console.log(decodedTransient.payload.jti);
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      document.getElementById("tokenize").addEventListener("click", encryptAndTokenize);
+    </script>
+  </body>
+</html>
