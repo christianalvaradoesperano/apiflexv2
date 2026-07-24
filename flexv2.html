@@ -2,7 +2,9 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <title>Flex APIv2</title>
+    <title>Flex API v2</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
     <style>
       body {
         font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -89,12 +91,47 @@
       button:hover {
         background: #e0a300;
       }
+
+      .result-container {
+        display: none;
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid #e2e8f0;
+      }
+
+      .copy-wrapper {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+
+      .copy-wrapper input {
+        flex: 1;
+      }
+
+      .copy-btn {
+        background: #e4e6eb;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        width: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s ease;
+        color: #002e6e;
+        flex-shrink: 0;
+      }
+
+      .copy-btn:hover {
+        background: #d8dadf;
+      }
     </style>
   </head>
   <body>
 
     <div class="card-form">
-      <h3>Cifrado JWE Coppel 3</h3>
+      <h3>Flex Api v2 - Cybersource</h3>
 
       <div class="form-group">
         <label for="captureContext">Capture Context (JWT)</label>
@@ -126,6 +163,16 @@
       </div>
 
       <button id="tokenize">Encriptar y Tokenizar</button>
+
+      <div id="resultContainer" class="result-container">
+        <label for="jtiResult">JTI Token Generado</label>
+        <div class="copy-wrapper">
+          <input id="jtiResult" type="text" readonly style="background: #f4f6f9; font-family: monospace; font-size: 13px;" />
+          <button id="copyButton" class="copy-btn" type="button">
+             <i class="fa fa-copy"></i>
+          </button>
+        </div>
+      </div>
     </div>
     <script>
       function parseJWT(token) {
@@ -196,12 +243,10 @@
       async function encryptAndTokenize() {
         try {
           const captureContext = document.getElementById("captureContext").value.trim();
-
-          if(captureContext == ''){
-            alert('Agrega el JWT del captureContext');
+          if (!captureContext) {
+            alert("Por favor, ingrese el Capture Context para poder continuar.");
             return;
           }
-
           const cardNumber = document.getElementById("cardNumber").value.replace(/\s+/g, '');
           const expiration = document.getElementById("expiration").value;
           const securityCode = document.getElementById("securityCode").value;
@@ -226,14 +271,30 @@
           }
           const transientToken = await tokenResponse.text();
           const decodedTransient = parseJWT(transientToken);
-          console.log(transientToken);
-          console.log(decodedTransient.payload.jti);
+          const jti = decodedTransient.payload.jti;
+          console.log("Token Transitorio JWT: " + transientToken)
+console.log("JTI: "+ jti)
+          document.getElementById("jtiResult").value = jti;
+          document.getElementById("resultContainer").style.display = "block";
         } catch (error) {
           console.error(error);
         }
       }
 
+      async function copyToClipboard() {
+        const jtiValue = document.getElementById("jtiResult").value;
+        if (jtiValue) {
+          await navigator.clipboard.writeText(jtiValue);
+          const copyBtn = document.getElementById("copyButton");
+          copyBtn.innerHTML = '<i class="fa fa-check"></i>';
+          setTimeout(() => {
+            copyBtn.innerHTML = '<i class="fa fa-copy"></i>';
+          }, 1500);
+        }
+      }
+
       document.getElementById("tokenize").addEventListener("click", encryptAndTokenize);
+      document.getElementById("copyButton").addEventListener("click", copyToClipboard);
     </script>
   </body>
 </html>
